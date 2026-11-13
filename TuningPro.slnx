@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="TuningPro.Api/TuningPro.Api.csproj" />
+  <Project Path="TuningPro.Business/TuningPro.Business.csproj" />
+  <Project Path="TuningPro.Data/TuningPro.Data.csproj" />
+</Solution>
