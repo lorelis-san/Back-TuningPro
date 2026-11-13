@@ -1,12 +1,13 @@
-﻿/*using TuningPro.Data.Entities;
+﻿using TuningPro.Data.Entities;
 using TuningPro.Data.Repositories;
 
 namespace TuningPro.Business.Services;
 
 public record PortalVehiculoDto(int Id, string Placa, string Marca, string Modelo, int Anio);
 public record PortalDetalleDto(string Pieza, string Categoria, int Cantidad, decimal PrecioUnitario, decimal Subtotal);
-public record PortalOrdenDto(DateTime FechaEmision, decimal ManoObra, decimal TotalPiezas, decimal Total);
-public record PortalProyectoDto(int Id, string Nombre, string Vehiculo, string Estado,
+public record PortalOrdenDto(string Codigo, string Estado, DateTime FechaRegistro, string Tecnico,
+    decimal SubtotalRepuestos, decimal Igv, decimal ManoObra, decimal Total);
+public record PortalProyectoDto(int Id, string Codigo, string Vehiculo, string Estado,
     DateTime FechaRegistro, List<PortalDetalleDto> Piezas, decimal Total, PortalOrdenDto? Orden);
 public record PortalResumenDto(string Cliente, List<PortalVehiculoDto> Vehiculos, List<PortalProyectoDto> Proyectos);
 
@@ -17,15 +18,16 @@ public interface IPortalService
 
 public class PortalService : IPortalService
 {
+    private const decimal TasaIgv = 0.18m;
+
     private readonly IVehiculoRepository _vehiculos;
     private readonly IProyectoRepository _proyectos;
-    private readonly IRepository<Pieza> _piezas;
     private readonly IOrdenTrabajoRepository _ordenes;
 
     public PortalService(IVehiculoRepository vehiculos, IProyectoRepository proyectos,
-        IRepository<Pieza> piezas, IOrdenTrabajoRepository ordenes)
+        IOrdenTrabajoRepository ordenes)
     {
-        _vehiculos = vehiculos; _proyectos = proyectos; _piezas = piezas; _ordenes = ordenes;
+        _vehiculos = vehiculos; _proyectos = proyectos; _ordenes = ordenes;
     }
 
     public async Task<PortalResumenDto> ObtenerResumenAsync(int usuarioId, string nombreCliente)
@@ -41,30 +43,39 @@ public class PortalService : IPortalService
         var ordenes = proyectos.Count == 0
             ? new List<OrdenTrabajo>()
             : await _ordenes.GetByProyectosAsync(proyectos.Select(p => p.Id).ToList());
-        var ordenPorProyecto = ordenes.ToDictionary(o => o.ProyectoId);
 
-        var piezas = (await _piezas.GetAllAsync()).ToDictionary(p => p.Id);
+        var ordenPorProyecto = ordenes
+            .GroupBy(o => o.ProyectoId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.FechaRegistro).First());
+
         var porVehiculo = vehiculos.ToDictionary(v => v.Id);
 
         var proyectosDto = proyectos.Select(p =>
         {
-            var detalles = p.Detalles.Select(d =>
-            {
-                piezas.TryGetValue(d.PiezaId, out var pieza);
-                return new PortalDetalleDto(
-                    pieza?.Nombre ?? $"Pieza #{d.PiezaId}",
-                    pieza?.Categoria ?? "",
-                    d.Cantidad, d.PrecioUnitario, d.Cantidad * d.PrecioUnitario);
-            }).ToList();
+            var piezas = new List<PortalDetalleDto>();
+            PortalOrdenDto? ordenDto = null;
+            decimal total = 0;
 
-            PortalOrdenDto? orden = null;
             if (ordenPorProyecto.TryGetValue(p.Id, out var o))
-                orden = new PortalOrdenDto(o.FechaEmision, o.ManoObra, o.TotalPiezas, o.Total);
+            {
+                piezas = o.Detalles.Select(d => new PortalDetalleDto(
+                    d.Pieza.Nombre, d.Pieza.Categoria,
+                    d.Cantidad, d.PrecioUnitario, d.Cantidad * d.PrecioUnitario)).ToList();
 
-            var v = porVehiculo[p.VehiculoId];
-            return new PortalProyectoDto(
-                p.Id, p.Nombre, $"{v.Marca} {v.Modelo} ({v.Placa})",
-                p.Estado, p.FechaRegistro, detalles, detalles.Sum(x => x.Subtotal), orden);
+                var subtotal = piezas.Sum(x => x.Subtotal);
+                var igv = Math.Round(subtotal * TasaIgv, 2);
+                total = subtotal + igv + o.ManoObra;
+
+                ordenDto = new PortalOrdenDto(o.Codigo, o.Estado, o.FechaRegistro,
+                    o.Tecnico.NombreCompleto, subtotal, igv, o.ManoObra, total);
+            }
+
+            var vehiculoTxt = porVehiculo.TryGetValue(p.VehiculoId, out var v)
+                ? $"{v.Marca} {v.Modelo} ({v.Placa})"
+                : $"Vehículo #{p.VehiculoId}";
+
+            return new PortalProyectoDto(p.Id, p.Codigo, vehiculoTxt, p.Estado,
+                p.FechaRegistro, piezas, total, ordenDto);
         }).ToList();
 
         var vehiculosDto = vehiculos
@@ -73,4 +84,4 @@ public class PortalService : IPortalService
 
         return new PortalResumenDto(nombreCliente, vehiculosDto, proyectosDto);
     }
-}*/
+}

@@ -1,4 +1,4 @@
-﻿/*using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TuningPro.Business.Config;
 using TuningPro.Business.Reportes;
@@ -31,4 +31,4 @@ public class ReportesController : ControllerBase
         try { return Pdf(await _service.HistorialVehiculoAsync(vehiculoId, Usuario)); }
         catch (KeyNotFoundException ex) { return NotFound(new { mensaje = ex.Message }); }
     }
-}*/
+}

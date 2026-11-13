@@ -94,15 +94,15 @@ builder.Services.AddScoped<IProyectoService, ProyectoService>();
 builder.Services.AddScoped<IClienteService, ClienteService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<ITokenGenerator, JwtTokenGenerator>();
-//builder.Services.AddScoped<IPortalService, PortalService>();
+builder.Services.AddScoped<IPortalService, PortalService>();                   // reactivado
 builder.Services.AddScoped<IVehiculoService, VehiculoService>();
 builder.Services.AddScoped<IProveedorService, ProveedorService>();
 builder.Services.AddScoped<IPiezaService, PiezaService>();
 builder.Services.AddScoped<IHistorialService, HistorialService>();
 builder.Services.AddSingleton<IReporteExportador, QuestPdfExportador>();       // Adapter
-//builder.Services.AddScoped<IReporteService, ReporteService>();
-builder.Services.AddScoped<IOrdenTrabajoRepository, OrdenTrabajoRepository>();
+builder.Services.AddScoped<IReporteService, ReporteService>();                 // reactivado (esto causaba el error)
 builder.Services.AddScoped<IOrdenTrabajoService, OrdenTrabajoService>();
+
 var app = builder.Build();
 
 // Crea los usuarios de demostración si la tabla está vacía

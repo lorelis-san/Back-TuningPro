@@ -1,4 +1,4 @@
-﻿/*using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TuningPro.Business.Config;
 using TuningPro.Business.Services;
@@ -22,4 +22,4 @@ public class PortalController : ControllerBase
         var nombre = User.FindFirst("nombre")?.Value ?? "Cliente";
         return Ok(await _portal.ObtenerResumenAsync(usuarioId, nombre));
     }
-}*/
+}

@@ -1,4 +1,4 @@
-﻿/*using System.Globalization;
+﻿using System.Globalization;
 using TuningPro.Business.Config;
 using TuningPro.Business.Reportes;
 using TuningPro.Data.Entities;
@@ -15,21 +15,22 @@ public interface IReporteService
 
 public class ReporteService : IReporteService
 {
+    private const decimal TasaIgv = 0.18m;
+
     private readonly IReporteExportador _exportador;
     private readonly ConfiguracionTaller _config;
     private readonly IRepository<Pieza> _piezas;
     private readonly IRepository<Proveedor> _proveedores;
-    private readonly IRepository<Vehiculo> _vehiculos;
     private readonly IProyectoRepository _proyectos;
     private readonly IOrdenTrabajoRepository _ordenes;
     private readonly IHistorialService _historial;
 
     public ReporteService(IReporteExportador exportador, ConfiguracionTaller config,
-        IRepository<Pieza> piezas, IRepository<Proveedor> proveedores, IRepository<Vehiculo> vehiculos,
+        IRepository<Pieza> piezas, IRepository<Proveedor> proveedores,
         IProyectoRepository proyectos, IOrdenTrabajoRepository ordenes, IHistorialService historial)
     {
         _exportador = exportador; _config = config; _piezas = piezas; _proveedores = proveedores;
-        _vehiculos = vehiculos; _proyectos = proyectos; _ordenes = ordenes; _historial = historial;
+        _proyectos = proyectos; _ordenes = ordenes; _historial = historial;
     }
 
     // ---------- Reporte 1: inventario ----------
@@ -76,40 +77,51 @@ public class ReporteService : IReporteService
     // ---------- Reporte 2: proyectos y órdenes ----------
     public async Task<ArchivoReporte> ProyectosAsync(string generadoPor)
     {
-        var proyectos = await _proyectos.GetAllConDetallesAsync();
-        var ordenes = (await _ordenes.GetTodasAsync()).ToDictionary(o => o.ProyectoId);
-        var vehiculos = (await _vehiculos.GetAllAsync()).ToDictionary(v => v.Id);
+        var proyectos = await _proyectos.ListarAsync();   // incluye Vehiculo
+
+        // Una orden por proyecto (si hubiera varias, se toma la más reciente)
+        var ordenes = (await _ordenes.GetTodasAsync())
+            .GroupBy(o => o.ProyectoId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.FechaRegistro).First());
 
         var filas = new List<string[]>();
         decimal totalOrdenes = 0;
 
-        foreach (var p in proyectos)
+        foreach (var p in proyectos.OrderBy(p => p.Numero))
         {
-            vehiculos.TryGetValue(p.VehiculoId, out var v);
-
-            var total = p.Detalles.Sum(d => d.Cantidad * d.PrecioUnitario);
+            var v = p.Vehiculo;
             var codigoOrden = "—";
+            var estadoOrden = "—";
+            var monto = "—";
+
             if (ordenes.TryGetValue(p.Id, out var orden))
             {
-                codigoOrden = CodigoOrden(orden.Id);
-                total = orden.Total;
-                totalOrdenes += orden.Total;
-            }
+                codigoOrden = orden.Codigo;
+                estadoOrden = orden.Estado;
 
-            // Cancelados y rechazados no muestran monto
-            var sinMonto = p.Estado is "Cancelado" or "Rechazado";
+                // Cancelados y rechazados no muestran monto ni suman al total
+                var sinMonto = p.Estado is "Cancelado" or "Rechazado";
+                if (!sinMonto)
+                {
+                    var total = TotalOrden(orden);
+                    monto = Soles(total);
+                    totalOrdenes += total;
+                }
+            }
 
             filas.Add(new[]
             {
-                p.Id.ToString(), p.Nombre,
+                p.Codigo,
                 v is null ? $"#{p.VehiculoId}" : $"{v.Marca} {v.Modelo} ({v.Placa})",
                 v?.ClienteNombre ?? string.Empty,
-                p.Estado, p.FechaRegistro.ToString("dd/MM/yy"), codigoOrden,
-                sinMonto ? "—" : Soles(total)
+                p.Estado,
+                p.FechaRegistro.ToString("dd/MM/yy"),
+                codigoOrden,
+                estadoOrden,
+                monto
             });
         }
 
-        var registrados = proyectos.Count(p => p.Estado == "Registrado");
         var cancelados = proyectos.Count(p => p.Estado == "Cancelado");
         var rechazados = proyectos.Count(p => p.Estado == "Rechazado");
 
@@ -118,19 +130,20 @@ public class ReporteService : IReporteService
             new List<ReporteResumenItem>
             {
                 new("Proyectos", proyectos.Count.ToString()),
+                new("Registrados", proyectos.Count(p => p.Estado == "Registrado").ToString()),
                 new("En proceso", proyectos.Count(p => p.Estado == "En proceso").ToString()),
-                new("En pausa", proyectos.Count(p => p.Estado == "En pausa").ToString()),
                 new("Finalizados", proyectos.Count(p => p.Estado == "Finalizado").ToString()),
                 new("Total en órdenes", Soles(totalOrdenes))
             },
             new ReporteTabla(
-                new[] { "N°", "Proyecto", "Vehículo", "Cliente", "Estado", "Fecha", "Orden", "Total" },
+                new[] { "Código", "Vehículo", "Cliente", "Estado", "Fecha", "Orden", "Estado orden", "Total" },
                 filas,
-                new float[] { 0.5f, 1.7f, 2.2f, 1.6f, 1.0f, 0.9f, 0.9f, 1.2f },
+                new float[] { 1.1f, 2.2f, 1.6f, 1.0f, 0.9f, 1.1f, 1.1f, 1.2f },
                 new[] { 7 }),
-            "El total es el monto de la orden de trabajo; si el proyecto aún no la tiene, se muestra el costo de las piezas instaladas. " +
-            "Los proyectos cancelados o rechazados no muestran monto. " +
-            $"Registrados: {registrados} · Cancelados: {cancelados} · Rechazados: {rechazados}.");
+            "El total es el monto de la orden de trabajo (repuestos + IGV + mano de obra); " +
+            "si el proyecto aún no tiene orden, no se muestra monto. " +
+            "Los proyectos cancelados o rechazados no muestran monto ni suman al total. " +
+            $"Cancelados: {cancelados} · Rechazados: {rechazados}.");
 
         return Pdf(Documento("Reporte de proyectos y órdenes de trabajo", "Trazabilidad de proyectos", generadoPor,
             new List<ReporteSeccion> { seccion }), "proyectos");
@@ -164,7 +177,7 @@ public class ReporteService : IReporteService
 
         foreach (var p in h.Proyectos)
         {
-            var titulo = $"Proyecto N° {p.Id} – {p.Nombre} · {p.Estado} · {p.FechaRegistro:dd/MM/yyyy}";
+            var titulo = $"Proyecto {p.Nombre} · {p.Estado} · {p.FechaRegistro:dd/MM/yyyy}";
 
             ReporteTabla? tabla = p.Piezas.Count == 0
                 ? null
@@ -180,16 +193,15 @@ public class ReporteService : IReporteService
 
             string nota;
             if (p.Estado == "Cancelado")
-                nota = "Proyecto cancelado: las piezas asignadas volvieron al inventario.";
+                nota = "Proyecto cancelado: no se contabiliza en la inversión.";
             else if (p.Estado == "Rechazado")
-                nota = "Proyecto rechazado.";
+                nota = "Proyecto rechazado: no se contabiliza en la inversión.";
             else if (p.Orden is { } o)
-                nota = $"{CodigoOrden(o.Id)} emitida el {o.FechaEmision:dd/MM/yyyy} por {o.EmitidaPor}. " +
-                       $"Piezas: {Soles(o.TotalPiezas)} · Mano de obra: {Soles(o.ManoObra)} · Total: {Soles(o.Total)}";
-            else if (p.Piezas.Count == 0)
-                nota = "Sin piezas instaladas todavía.";
+                nota = $"{o.Codigo} ({o.Estado}) registrada el {o.FechaRegistro:dd/MM/yyyy} · Técnico: {o.TecnicoNombre}. " +
+                       $"Repuestos: {Soles(o.SubtotalRepuestos)} · IGV: {Soles(o.Igv)} · " +
+                       $"Mano de obra: {Soles(o.ManoObra)} · Total: {Soles(o.Total)}";
             else
-                nota = $"Sin orden de trabajo emitida. Costo de piezas: {Soles(p.TotalPiezas)}";
+                nota = "Sin orden de trabajo registrada todavía.";
 
             secciones.Add(new ReporteSeccion(titulo, new List<ReporteResumenItem>(), tabla, nota));
         }
@@ -199,6 +211,13 @@ public class ReporteService : IReporteService
     }
 
     // ---------- Ayudas ----------
+    private static decimal TotalOrden(OrdenTrabajo orden)
+    {
+        var subtotal = orden.Detalles.Sum(d => d.Cantidad * d.PrecioUnitario);
+        var igv = Math.Round(subtotal * TasaIgv, 2);
+        return subtotal + igv + orden.ManoObra;
+    }
+
     private ReporteDocumento Documento(string titulo, string subtitulo, string generadoPor,
         List<ReporteSeccion> secciones) =>
         new(_config.NombreTaller, titulo, subtitulo, generadoPor, DateTime.Now, secciones);
@@ -208,11 +227,9 @@ public class ReporteService : IReporteService
 
     private static string Soles(decimal monto) => "S/ " + monto.ToString("N2", CultureInfo.InvariantCulture);
 
-    private static string CodigoOrden(int id) => "OT-" + id.ToString("D4");
-
     private static string Limpiar(string texto)
     {
         var limpio = new string(texto.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray());
         return limpio.Length == 0 ? "vehiculo" : limpio;
     }
-}*/
+}
