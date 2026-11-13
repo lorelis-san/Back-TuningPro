@@ -13,5 +13,6 @@ namespace TuningPro.Business.Services
         Task<List<ProyectoDto>> ListarAsync();
         Task<ProyectoDto?> ObtenerAsync(int id);
         Task<ProyectoDto> CrearAsync(ProyectoCrearDto dto, int recepcionistaId);
+        Task CancelarAsync(int id);
     }
 }

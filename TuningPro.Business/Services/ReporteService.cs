@@ -130,7 +130,7 @@ public class ReporteService : IReporteService
             new List<ReporteResumenItem>
             {
                 new("Proyectos", proyectos.Count.ToString()),
-                new("Registrados", proyectos.Count(p => p.Estado == "Registrado").ToString()),
+                new("Sin orden", proyectos.Count(p => p.Estado == "Sin orden").ToString()),
                 new("En proceso", proyectos.Count(p => p.Estado == "En proceso").ToString()),
                 new("Finalizados", proyectos.Count(p => p.Estado == "Finalizado").ToString()),
                 new("Total en órdenes", Soles(totalOrdenes))

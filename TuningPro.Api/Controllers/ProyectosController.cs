@@ -51,4 +51,13 @@ public class ProyectosController : ControllerBase
             return BadRequest(new { mensaje = ex.Message });
         }
     }
+
+    [HttpPut("{id:int}/cancelar")]
+    [Authorize(Roles = RolesTaller.SoloAdmin)]
+    public async Task<IActionResult> Cancelar(int id)
+    {
+        try { await _service.CancelarAsync(id); return NoContent(); }
+        catch (KeyNotFoundException ex) { return NotFound(new { mensaje = ex.Message }); }
+        catch (InvalidOperationException ex) { return BadRequest(new { mensaje = ex.Message }); }
+    }
 }

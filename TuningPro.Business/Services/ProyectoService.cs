@@ -1,34 +1,46 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using TuningPro.Business.Dtos;
+﻿using TuningPro.Business.Dtos;
 using TuningPro.Data.Entities;
 using TuningPro.Data.Repositories;
 namespace TuningPro.Business.Services;
 
 public class ProyectoService : IProyectoService
 {
+    private const decimal TasaIgv = 0.18m;
+
     private readonly IProyectoRepository _repo;
     private readonly IClienteRepository _clientes;
+    private readonly IOrdenTrabajoRepository _ordenes;
+    private readonly IOrdenTrabajoService _ordenesService;
 
-    public ProyectoService(IProyectoRepository repo, IClienteRepository clientes)
+    public ProyectoService(IProyectoRepository repo, IClienteRepository clientes,
+        IOrdenTrabajoRepository ordenes, IOrdenTrabajoService ordenesService)
     {
         _repo = repo;
         _clientes = clientes;
+        _ordenes = ordenes;
+        _ordenesService = ordenesService;
     }
 
-    private static ProyectoDto Mapear(Proyectos p) => new(
-        p.Id, p.Codigo, p.FechaRegistro,
-        p.Vehiculo.UsuarioId, p.Vehiculo.ClienteNombre,
-        p.VehiculoId, $"{p.Vehiculo.Marca} {p.Vehiculo.Modelo}", p.Vehiculo.Placa,
-        p.Recepcionista?.NombreCompleto ?? string.Empty,
-        p.Problemas.Select(x => x.ProblemaCatalogo.Nombre).ToList(),
-        p.OtrosProblema, p.NotasRecepcion,
-        p.Estado,
-        p.Detalles.Sum(d => d.Cantidad * d.PrecioUnitario));
+    private static ProyectoDto Mapear(Proyectos p, OrdenTrabajo? o)
+    {
+        decimal total = 0;
+        if (o is not null && o.Estado != "Cancelado")
+        {
+            var subtotal = o.Detalles.Sum(d => d.Cantidad * d.PrecioUnitario);
+            total = subtotal + Math.Round(subtotal * TasaIgv, 2) + o.ManoObra;
+        }
+
+        return new ProyectoDto(
+            p.Id, p.Codigo, p.FechaRegistro,
+            p.Vehiculo.UsuarioId, p.Vehiculo.ClienteNombre,
+            p.VehiculoId, $"{p.Vehiculo.Marca} {p.Vehiculo.Modelo}", p.Vehiculo.Placa,
+            p.Recepcionista?.NombreCompleto ?? string.Empty,
+            p.Problemas.Select(x => x.ProblemaCatalogo.Nombre).ToList(),
+            p.OtrosProblema, p.NotasRecepcion,
+            p.Estado,
+            total,
+            o?.Id, o?.Codigo, o?.Estado);
+    }
 
     public async Task<ProyectoNuevoInfoDto> ObtenerInfoNuevoAsync(int usuarioId)
     {
@@ -40,13 +52,28 @@ public class ProyectoService : IProyectoService
     public async Task<List<ProblemaDto>> ListarProblemasAsync() =>
         (await _repo.ListarProblemasAsync()).Select(x => new ProblemaDto(x.Id, x.Nombre)).ToList();
 
-    public async Task<List<ProyectoDto>> ListarAsync() =>
-        (await _repo.ListarAsync()).Select(Mapear).ToList();
+    public async Task<List<ProyectoDto>> ListarAsync()
+    {
+        var proyectos = await _repo.ListarAsync();
+        var ordenes = (await _ordenes.GetTodasAsync())
+            .GroupBy(o => o.ProyectoId)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(o => o.FechaRegistro).First());
+
+        return proyectos
+            .Select(p => Mapear(p, ordenes.GetValueOrDefault(p.Id)))
+            .ToList();
+    }
 
     public async Task<ProyectoDto?> ObtenerAsync(int id)
     {
         var p = await _repo.ObtenerPorIdAsync(id);
-        return p is null ? null : Mapear(p);
+        if (p is null) return null;
+
+        var orden = (await _ordenes.GetByProyectosAsync(new[] { id }))
+            .OrderByDescending(o => o.FechaRegistro)
+            .FirstOrDefault();
+
+        return Mapear(p, orden);
     }
 
     public async Task<ProyectoDto> CrearAsync(ProyectoCrearDto dto, int recepcionistaId)
@@ -72,10 +99,25 @@ public class ProyectoService : IProyectoService
             OtrosProblema = string.IsNullOrWhiteSpace(otros) ? null : otros,
             NotasRecepcion = dto.NotasRecepcion?.Trim(),
             Problemas = ids.Select(id => new ProyectoProblema { ProblemaCatalogoId = id }).ToList(),
-
         };
 
         await _repo.AgregarAsync(proyecto);
         return (await ObtenerAsync(proyecto.Id))!;
+    }
+
+    public async Task CancelarAsync(int id)
+    {
+        var proyecto = await _repo.ObtenerPorIdAsync(id)
+            ?? throw new KeyNotFoundException("El proyecto no existe.");
+
+        if (proyecto.Estado is "Finalizado" or "Cancelado")
+            throw new InvalidOperationException($"Un proyecto {proyecto.Estado.ToLower()} no se puede cancelar.");
+
+        var orden = await _ordenes.ObtenerPorProyectoIdAsync(id);
+        if (orden is not null)
+            // cancela la orden, devuelve el stock y deja el proyecto en "Cancelado"
+            await _ordenesService.CambiarEstadoAsync(orden.Id, "Cancelado", "Administrador");
+        else
+            await _repo.ActualizarEstadoAsync(id, "Cancelado");
     }
 }

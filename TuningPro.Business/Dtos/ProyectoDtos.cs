@@ -22,7 +22,8 @@ public record ProyectoDto(
     string Recepcionista, List<string> Problemas,
     string? OtrosProblema, string? NotasRecepcion,
     string Estado,
-    decimal Total);
+    decimal Total,
+    int? OrdenId, string? OrdenCodigo, string? OrdenEstado);
 
 public record ProblemaDto(int Id, string Nombre);
 public record ClienteItemDto(int Id, string Nombre);

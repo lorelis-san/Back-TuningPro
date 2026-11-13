@@ -15,8 +15,8 @@ public interface IOrdenTrabajoService
 
 public class OrdenTrabajoService : IOrdenTrabajoService
 {
-    private static readonly string[] EstadosValidos = { "Registrado", "En proceso", "Finalizado" };
-
+    // 1) Agrega "Cancelado"
+    private static readonly string[] EstadosValidos = { "Registrado", "En proceso", "Finalizado", "Cancelado" };
     private readonly IOrdenTrabajoRepository _ordenes;
     private readonly IProyectoRepository _proyectos;
     private readonly IRepository<Pieza> _piezas;
@@ -135,8 +135,6 @@ public class OrdenTrabajoService : IOrdenTrabajoService
 
         await _piezas.SaveAsync();
         await _ordenes.AgregarAsync(orden);
-
-        await _ordenes.AgregarAsync(orden);
         await _proyectos.ActualizarEstadoAsync(proyecto.Id, "En proceso");
 
 
@@ -153,15 +151,32 @@ public class OrdenTrabajoService : IOrdenTrabajoService
         if (!EstadosValidos.Contains(nuevoEstado))
             throw new InvalidOperationException("Estado no válido.");
 
+        if (nuevoEstado == "Cancelado" && usuarioRol != "Administrador")
+            throw new UnauthorizedAccessException("Solo el administrador puede cancelar.");
+
         var orden = await _ordenes.ObtenerPorIdAsync(id)
             ?? throw new KeyNotFoundException("La orden de trabajo no existe.");
 
-        await _ordenes.ActualizarEstadoAsync(orden, nuevoEstado);
+        if (orden.Estado is "Finalizado" or "Cancelado")
+            throw new InvalidOperationException($"Una orden {orden.Estado.ToLower()} ya no puede cambiar de estado.");
+
+        // Al cancelar, las piezas vuelven al inventario.
+        // La orden se carga con seguimiento (Detalles.Pieza), así que el stock y el estado
+        // se guardan juntos en el mismo SaveChanges (si algo falla, no queda a medias).
+        if (nuevoEstado == "Cancelado")
+        {
+            foreach (var d in orden.Detalles)
+                d.Pieza.Stock += d.Cantidad;
+        }
 
         await _ordenes.ActualizarEstadoAsync(orden, nuevoEstado);
 
-        // Proyecto: Finalizado solo cuando la orden finaliza; en cualquier otro caso sigue En proceso
-        var estadoProyecto = nuevoEstado == "Finalizado" ? "Finalizado" : "En proceso";
+        var estadoProyecto = nuevoEstado switch
+        {
+            "Finalizado" => "Finalizado",
+            "Cancelado" => "Cancelado",
+            _ => "En proceso"
+        };
         await _proyectos.ActualizarEstadoAsync(orden.ProyectoId, estadoProyecto);
 
         return MapearDto(orden);
